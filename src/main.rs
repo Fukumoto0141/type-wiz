@@ -14,7 +14,7 @@ use questions::{QUESTIONS_LIST, Question};
 mod roman_mapping;
 use roman_mapping::create_roman_mapping;
 
-// ▼▼▼ 追加: セーブデータモジュール ▼▼▼
+// セーブデータモジュール
 mod save_data;
 use save_data::PlayerData;
 
@@ -26,9 +26,9 @@ use crossterm::{
 
 use ratatui::{
     prelude::*,
-    style::{Color, Style},
+    style::{Color, Style, Stylize}, // Stylize を Gauge のために追加
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Gauge}, // Gauge (ゲージ) を追加
+    widgets::{Block, Borders, Paragraph, Gauge}, // Gauge を追加
 };
 
 // --------------------------------------------------
@@ -46,9 +46,9 @@ struct CharState {
 
 impl CharState {
     /// 新しい CharState を作成
-    fn new(_hiragana: String, patterns: Vec<String>) -> Self {
+    fn new(hiragana: String, patterns: Vec<String>) -> Self {
         Self {
-            _hiragana,
+            _hiragana: hiragana,
             patterns,
             current_pattern_idx: 0,
             typed_count: 0,
@@ -88,10 +88,19 @@ struct AppState<'a> {
     last_wpm: Option<f64>,
     last_time: Option<f64>,
     
+    // ▼▼▼ (ミス・スコア) マージ ▼▼▼
+    /// 現在のお題でのミス回数
+    current_misses: u32,
+    /// 直前のお題のミス回数
+    last_misses: Option<u32>,
+    /// 直前のお題のスコア
+    last_score: Option<f64>,
+    // ▲▲▲ (ミス・スコア) マージここまで ▲▲▲
+
     /// ローマ字辞書
     roman_map: HashMap<&'static str, Vec<&'static str>>,
 
-    // ▼▼▼ 追加: プレイヤーデータ ▼▼▼
+    /// プレイヤーデータ
     player_data: PlayerData,
 }
 
@@ -107,9 +116,15 @@ impl<'a> AppState<'a> {
             start_time: None,
             last_wpm: None,
             last_time: None,
+            
+            // ▼▼▼ (ミス・スコア) マージ ▼▼▼
+            current_misses: 0,
+            last_misses: None,
+            last_score: None,
+            // ▲▲▲ (ミス・スコア) マージここまで ▲▲▲
+
             roman_map: create_roman_mapping(), // `roman_mapping` モジュールから辞書作成
-            // ▼▼▼ 追加: 起動時にロード ▼▼▼
-            player_data: PlayerData::load(),
+            player_data: PlayerData::load(),   // 起動時にロード
         };
         state.load_current_question(); // 最初のお題を読み込む
         state
@@ -124,6 +139,10 @@ impl<'a> AppState<'a> {
 
         self.current_char_index = 0;
         self.is_error = false;
+        
+        // ▼▼▼ (ミス・スコア) マージ ▼▼▼
+        self.current_misses = 0; // お題が変わるたびにミスをリセット
+        // ▲▲▲ (ミス・スコア) マージここまで ▲▲▲
     }
     
     /// ひらがな文字列を `Vec<CharState>` に分解（パース）する
@@ -238,6 +257,9 @@ impl<'a> AppState<'a> {
             // どのパターンにも合わなかった
             if !found {
                 self.is_error = true;
+                // ▼▼▼ (ミス・スコア) マージ ▼▼▼
+                self.current_misses += 1; // ミス回数をカウント
+                // ▲▲▲ (ミス・スコア) マージここまで ▲▲▲
             }
         }
     }
@@ -285,16 +307,31 @@ impl<'a> AppState<'a> {
                 .map(|cs| cs.current_pattern().len())
                 .sum();
             
+            // ▼▼▼ (ミス・スコア) スコア計算ロジックに置換 ▼▼▼
+            let misses = self.current_misses;
+            let total_attempts = (total_chars as u32 + misses) as f64;
+            let accuracy = if total_attempts > 0.0 {
+                (total_chars as f64 / total_attempts) * 100.0
+            } else {
+                100.0
+            };
+
+            let mut wpm = 0.0;
             if duration_sec > 0.0 {
-                let wpm = (total_chars as f64 / 5.0) / (duration_sec / 60.0);
-                self.last_wpm = Some(wpm);
-                self.last_time = Some(duration_sec);
+                let duration_min = duration_sec / 60.0;
+                wpm = (total_chars as f64 / 5.0) / duration_min;
             }
 
-            // ▼▼▼ 追加: 経験値加算とセーブ ▼▼▼
-            // タイプした文字数をそのまま経験値として加算
+            let score = wpm * (accuracy / 100.0).powi(3);
+
+            self.last_wpm = Some(wpm);
+            self.last_time = Some(duration_sec);
+            self.last_misses = Some(misses);
+            self.last_score = Some(score);
+
             self.player_data.add_xp(total_chars as u32);
             self.player_data.save();
+            // ▲▲▲ (ミス・スコア) 置換ここまで ▲▲▲
         }
         
         // 次のお題へ
@@ -369,25 +406,26 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     let inner_area = block.inner(size);
     f.render_widget(block, size);
 
-    // レイアウト: ヘッダー(Lvなど)/リザルト/日本語/空白/タイピング
+    // ▼▼▼ (ミス・スコア) レイアウト変更 ▼▼▼
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // [0] ステータスバー (Lv, XP)
-            Constraint::Length(1), // [1] リザルト
+            Constraint::Length(2), // [1] リザルト (2行に変更)
             Constraint::Length(1), // [2] 日本語
             Constraint::Length(1), // [3] 空白
             Constraint::Length(1), // [4] ひらがな
             Constraint::Min(1),    // [5] タイピングエリア
         ])
         .split(inner_area);
+    // ▲▲▲ (ミス・スコア) レイアウト変更ここまで ▲▲▲
 
     // 0. ステータスバー (レベルとXPゲージ)
     let pd = &app_state.player_data;
     let req_xp = pd.required_xp_for_next_level();
     // ゲージの比率 (0.0 ~ 1.0)
     let ratio = if req_xp > 0 {
-        pd.current_xp as f64 / req_xp as f64
+        (pd.current_xp as f64 / req_xp as f64).min(1.0)
     } else {
         0.0
     };
@@ -401,15 +439,23 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     f.render_widget(gauge, chunks[0]);
 
 
-    // 1. リザルト表示
-    let result_text = match (app_state.last_wpm, app_state.last_time) {
+    // ▼▼▼ (ミス・スコア) リザルト表示 (2行) ▼▼▼
+    let wpm_time_text = match (app_state.last_wpm, app_state.last_time) {
         (Some(wpm), Some(time)) => format!("Last: WPM: {:.2} / Time: {:.2}s", wpm, time),
         _ => String::new(),
     };
-    f.render_widget(
-        Paragraph::new(result_text).style(Style::default().fg(Color::Yellow)),
-        chunks[1],
-    );
+    let score_miss_text = match (app_state.last_score, app_state.last_misses) {
+        (Some(score), Some(misses)) => format!("Score: {:.0} / Miss: {}", score, misses),
+        _ => String::new(),
+    };
+
+    let result_paragraph = Paragraph::new(vec![
+        Line::from(wpm_time_text).style(Style::default().fg(Color::Yellow)),
+        Line::from(score_miss_text).style(Style::default().fg(Color::Yellow)),
+    ]);
+    
+    f.render_widget(result_paragraph, chunks[1]);
+    // ▲▲▲ (ミス・スコア) リザルト表示ここまで ▲▲▲
 
     // 2. 日本語（漢字混じり）表示
     f.render_widget(

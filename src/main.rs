@@ -85,7 +85,9 @@ struct AppState<'a> {
     start_time: Option<Instant>, // タイマー開始時刻
     
     // 直前のリザルト表示用
-    last_wpm: Option<f64>,
+    // ▼▼▼ 変更: WPM -> CPS ▼▼▼
+    last_cps: Option<f64>, // last_wpm からリネーム
+    // ▲▲▲ 変更ここまで ▲▲▲
     last_time: Option<f64>,
     
     // ▼▼▼ (ミス・スコア) マージ ▼▼▼
@@ -114,7 +116,9 @@ impl<'a> AppState<'a> {
             current_char_index: 0,
             is_error: false,
             start_time: None,
-            last_wpm: None,
+            // ▼▼▼ 変更: WPM -> CPS ▼▼▼
+            last_cps: None, // last_wpm からリネーム
+            // ▲▲▲ 変更ここまで ▲▲▲
             last_time: None,
             
             // ▼▼▼ (ミス・スコア) マージ ▼▼▼
@@ -241,7 +245,7 @@ impl<'a> AppState<'a> {
                 if pattern.starts_with(typed_so_far) {
                     // "shi" の `typed_count` 番目('h')は、入力('h')と一致するか？
                     if Some(c) == pattern.chars().nth(current_state.typed_count) {
-                        current_state.current_pattern_idx = i; // パターンを "shi" に切り替え
+                        current_state.current_pattern_idx = i; // パターンを切り替え
                         current_state.typed_count += 1;
                         self.is_error = false;
                         found = true;
@@ -257,9 +261,7 @@ impl<'a> AppState<'a> {
             // どのパターンにも合わなかった
             if !found {
                 self.is_error = true;
-                // ▼▼▼ (ミス・スコア) マージ ▼▼▼
                 self.current_misses += 1; // ミス回数をカウント
-                // ▲▲▲ (ミス・スコア) マージここまで ▲▲▲
             }
         }
     }
@@ -307,7 +309,6 @@ impl<'a> AppState<'a> {
                 .map(|cs| cs.current_pattern().len())
                 .sum();
             
-            // ▼▼▼ (ミス・スコア) スコア計算ロジックに置換 ▼▼▼
             let misses = self.current_misses;
             let total_attempts = (total_chars as u32 + misses) as f64;
             let accuracy = if total_attempts > 0.0 {
@@ -316,22 +317,24 @@ impl<'a> AppState<'a> {
                 100.0
             };
 
-            let mut wpm = 0.0;
+            // ▼▼▼ 変更: スコア計算を CPS ベースに変更 ▼▼▼
+            let mut cps = 0.0;
             if duration_sec > 0.0 {
-                let duration_min = duration_sec / 60.0;
-                wpm = (total_chars as f64 / 5.0) / duration_min;
+                cps = total_chars as f64 / duration_sec; // CPS = 総文字数 / 秒
             }
 
-            let score = wpm * (accuracy / 100.0).powi(3);
+            // スコア計算: CPS * (正確率 / 100)^3
+            // (WPM の計算は不要になったため削除)
+            let score = cps * (accuracy / 100.0).powi(3);
 
-            self.last_wpm = Some(wpm);
+            self.last_cps = Some(cps); // last_wpm -> last_cps
             self.last_time = Some(duration_sec);
             self.last_misses = Some(misses);
             self.last_score = Some(score);
 
             self.player_data.add_xp(total_chars as u32);
             self.player_data.save();
-            // ▲▲▲ (ミス・スコア) 置換ここまで ▲▲▲
+            // ▲▲▲ 変更ここまで ▲▲▲
         }
         
         // 次のお題へ
@@ -406,24 +409,21 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     let inner_area = block.inner(size);
     f.render_widget(block, size);
 
-    // ▼▼▼ (ミス・スコア) レイアウト変更 ▼▼▼
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // [0] ステータスバー (Lv, XP)
-            Constraint::Length(2), // [1] リザルト (2行に変更)
+            Constraint::Length(2), // [1] リザルト (2行)
             Constraint::Length(1), // [2] 日本語
             Constraint::Length(1), // [3] 空白
             Constraint::Length(1), // [4] ひらがな
             Constraint::Min(1),    // [5] タイピングエリア
         ])
         .split(inner_area);
-    // ▲▲▲ (ミス・スコア) レイアウト変更ここまで ▲▲▲
 
     // 0. ステータスバー (レベルとXPゲージ)
     let pd = &app_state.player_data;
     let req_xp = pd.required_xp_for_next_level();
-    // ゲージの比率 (0.0 ~ 1.0)
     let ratio = if req_xp > 0 {
         (pd.current_xp as f64 / req_xp as f64).min(1.0)
     } else {
@@ -439,23 +439,24 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     f.render_widget(gauge, chunks[0]);
 
 
-    // ▼▼▼ (ミス・スコア) リザルト表示 (2行) ▼▼▼
-    let wpm_time_text = match (app_state.last_wpm, app_state.last_time) {
-        (Some(wpm), Some(time)) => format!("Last: WPM: {:.2} / Time: {:.2}s", wpm, time),
+    // 1. リザルト表示
+    // ▼▼▼ 変更: WPM -> CPS ▼▼▼
+    let cps_time_text = match (app_state.last_cps, app_state.last_time) { // last_wpm -> last_cps
+        (Some(cps), Some(time)) => format!("Last: CPS: {:.2} / Time: {:.2}s", cps, time), // WPM -> CPS
         _ => String::new(),
     };
+    // ▲▲▲ 変更ここまで ▲▲▲
     let score_miss_text = match (app_state.last_score, app_state.last_misses) {
         (Some(score), Some(misses)) => format!("Score: {:.0} / Miss: {}", score, misses),
         _ => String::new(),
     };
 
     let result_paragraph = Paragraph::new(vec![
-        Line::from(wpm_time_text).style(Style::default().fg(Color::Yellow)),
+        Line::from(cps_time_text).style(Style::default().fg(Color::Yellow)), // wpm_time_text -> cps_time_text
         Line::from(score_miss_text).style(Style::default().fg(Color::Yellow)),
     ]);
     
     f.render_widget(result_paragraph, chunks[1]);
-    // ▲▲▲ (ミス・スコア) リザルト表示ここまで ▲▲▲
 
     // 2. 日本語（漢字混じり）表示
     f.render_widget(

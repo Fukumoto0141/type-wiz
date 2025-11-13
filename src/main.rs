@@ -22,6 +22,7 @@ use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    cursor::{Hide, Show},
 };
 
 use ratatui::{
@@ -358,11 +359,13 @@ fn main() -> Result<()> {
 fn setup_terminal() -> Result<Terminal<impl Backend>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?; // 代替スクリーンを使用
+    stdout().execute(Hide)?; // カーソルを非表示
     let backend = CrosstermBackend::new(stdout());
     Ok(Terminal::new(backend)?)
 }
 
 fn restore_terminal(terminal: &mut Terminal<impl Backend>) -> Result<()> {
+    stdout().execute(Show)?; // カーソルを再表示
     stdout().execute(LeaveAlternateScreen)?; // 代替スクリーンを終了
     disable_raw_mode()?;
     terminal.show_cursor()?;
@@ -442,7 +445,7 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     // 1. リザルト表示
     // ▼▼▼ 変更: WPM -> CPS ▼▼▼
     let cps_time_text = match (app_state.last_cps, app_state.last_time) { // last_wpm -> last_cps
-        (Some(cps), Some(time)) => format!("Last: CPS: {:.2} / Time: {:.2}s", cps, time), // WPM -> CPS
+        (Some(cps), Some(time)) => format!("CPS: {:.2} / Time: {:.2}s", cps, time), // WPM -> CPS
         _ => String::new(),
     };
     // ▲▲▲ 変更ここまで ▲▲▲
@@ -461,20 +464,21 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     // 2. 日本語（漢字混じり）表示
     f.render_widget(
         Paragraph::new(app_state.get_current_question().japanese)
-            .style(Style::default().fg(Color::White).bold()),
+            .style(Style::default().fg(Color::White).bold())
+            .centered(),
         chunks[2],
     );
     
     // 3. ひらがな表示
     f.render_widget(
         Paragraph::new(app_state.get_current_question().hiragana)
-            .style(Style::default().fg(Color::Gray)),
+            .style(Style::default().fg(Color::Gray))
+            .centered(),
         chunks[4],
     );
 
     // 4. ローマ字タイピングエリア表示
     let mut spans = Vec::new();
-    let mut cursor_pos = 0;
     
     // 全ての CharState をループして描画
     for (i, cs) in app_state.char_states.iter().enumerate() {
@@ -484,7 +488,6 @@ fn ui(f: &mut Frame, app_state: &AppState) {
         if i < app_state.current_char_index {
             // 完了済みの CharState (緑)
             spans.push(Span::styled(pattern, Style::default().fg(Color::Green)));
-            cursor_pos += pattern.len();
         } else if i == app_state.current_char_index {
             // 現在の CharState (入力中)
             let typed = &pattern[..cs.typed_count];
@@ -493,7 +496,6 @@ fn ui(f: &mut Frame, app_state: &AppState) {
             if !typed.is_empty() {
                 spans.push(Span::styled(typed, Style::default().fg(Color::Green)));
             }
-            cursor_pos += typed.len();
             
             if let Some(next) = remaining.chars().next() {
                 // カーソル (白または赤)
@@ -518,7 +520,8 @@ fn ui(f: &mut Frame, app_state: &AppState) {
         }
     }
 
-    f.render_widget(Paragraph::new(Line::from(spans)), chunks[5]);
-    // カーソル位置を計算してセット
-    f.set_cursor_position((chunks[5].x + cursor_pos as u16, chunks[5].y));
+    f.render_widget(
+        Paragraph::new(Line::from(spans))
+            .centered(),
+        chunks[5]); 
 }

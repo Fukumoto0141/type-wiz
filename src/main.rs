@@ -427,15 +427,20 @@ fn ui(f: &mut Frame, app_state: &AppState) {
     } else {
         0.0
     };
+
+    // 直前の獲得XP
+    let xp_text = match app_state.last_xp_gained {
+        Some(xp) => format!(" +{}XP", xp),
+        None => String::new(),
+    };
     
-    let label = format!("Lv.{} ({} / {})", pd.level, pd.current_xp, req_xp);
+    let label = format!("Lv.{} ({} / {}) {}", pd.level, pd.current_xp, req_xp, xp_text);
     let gauge = Gauge::default()
         .block(Block::default().borders(Borders::NONE))
         .gauge_style(Style::default().fg(Color::Magenta).bg(Color::Black))
         .ratio(ratio)
         .label(label);
     f.render_widget(gauge, chunks[0]);
-
 
     // 1. リザルト表示
     let cps_time_text = match (app_state.last_cps, app_state.last_time) {

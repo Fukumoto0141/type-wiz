@@ -16,7 +16,9 @@ use roman_mapping::create_roman_mapping;
 
 // セーブデータモジュール
 mod save_data;
-use save_data::PlayerData;
+use save_data::{PlayerData, TypeRecord};
+
+use chrono::Utc;
 
 use crossterm::{
     ExecutableCommand,
@@ -321,15 +323,32 @@ impl<'a> AppState<'a> {
             let accuracy_mod = (accuracy / 100.0).powi(3); // ミスが少ないほどボーナス
             let final_xp = (base_xp * skill_bonus * accuracy_mod).round() as u32;
 
-
             self.last_cps = Some(cps);
             self.last_time = Some(duration_sec);
             self.last_misses = Some(misses);
             self.last_score = Some(score);
             self.last_xp_gained = Some(final_xp);
 
+            // タイピング記録を履歴に追加
+            let question = self.get_current_question();
+            let record = TypeRecord {
+                timestamp: Utc::now(),
+                question_japanese: question.japanese.to_string(),
+                question_hiragana: question.hiragana.to_string(),
+                total_chars: total_chars as u32,
+                duration_sec,
+                misses,
+                cps,
+                score,
+                xp_gained: final_xp,
+            };
+            self.player_data.history.push(record);
+
+            // XPとミスカウントを更新
             self.player_data.add_xp(final_xp, total_chars as u32);
             self.player_data.total_misses += misses;
+            
+            // セーブ
             self.player_data.save();
         }
         
@@ -359,7 +378,7 @@ fn setup_terminal() -> Result<Terminal<impl Backend>> {
     Ok(Terminal::new(backend)?)
 }
 
-fn restore_terminal(terminal: &mut Terminal<impl Backend>) -> Result<()> {
+fn restore_terminal(_terminal: &mut Terminal<impl Backend>) -> Result<()> {
     stdout().execute(Show)?; // カーソルを再表示
     stdout().execute(LeaveAlternateScreen)?; // 代替スクリーンを終了
     disable_raw_mode()?;
@@ -403,7 +422,7 @@ fn run_app(terminal: &mut Terminal<impl Backend>) -> Result<()> {
 fn ui(f: &mut Frame, app_state: &AppState) {
     let size = f.area();
     // 枠線を描画
-    let block = Block::default().borders(Borders::ALL).title("Type Wiz !");
+    let block = Block::default().borders(Borders::ALL).title(" TYPE WiZ ");
     let inner_area = block.inner(size);
     f.render_widget(block, size);
 

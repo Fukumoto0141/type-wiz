@@ -136,7 +136,7 @@ impl PlayerData {
     /// 次のレベルまでに必要な経験値を計算する
     // 計算式: (レベル ^ 1.5) * 100
     pub fn required_xp_for_next_level(&self) -> u32 {
-        ((self.level as f64).powf(1.5) * 100.0).round() as u32
+        ((self.level as f64).powf(1.1) * 10.0).round() as u32
     }
 
     /// 経験値を加算し、レベルアップ判定を行う

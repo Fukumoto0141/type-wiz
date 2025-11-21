@@ -7,6 +7,8 @@ use std::io::{Result, stdout};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use clap::{Parser, Subcommand};
+use console::Term;
 use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode},
@@ -14,6 +16,7 @@ use crossterm::{
     cursor::Hide,
 };
 use dialoguer::{theme::ColorfulTheme, Select};
+use rand::seq::SliceRandom;
 use ratatui::{
     prelude::*,
     style::{Color, Style, Stylize},
@@ -46,6 +49,26 @@ enum AppMode {
 }
 
 // --------------------------------------------------
+// MARK:コマンドライン引数
+// --------------------------------------------------
+#[derive(Parser)]
+#[command(version, about, disable_help_subcommand = true)]
+struct Cli {
+    #[command(subcommand,)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// タイピングゲームを開始
+    #[command(visible_aliases = ["S","s"])]
+    Start,
+    /// ゲームログを表示
+    #[command(visible_aliases = ["L","l"])]
+    Log,
+}
+
+// --------------------------------------------------
 // データ構造
 // --------------------------------------------------
 
@@ -59,7 +82,6 @@ struct CharState {
 }
 
 impl CharState {
-    /// 新しい CharState を作成
     fn new(hiragana: String, patterns: Vec<String>) -> Self {
         Self {
             _hiragana: hiragana,
@@ -85,12 +107,12 @@ impl CharState {
     }
 }
 
-/// アプリ全体の状態を管理する
+/// MARK:アプリ全体の状態を管理する
 struct AppState<'a> {
     mode: AppMode,
     _menu_index: usize,         // メニューの選択インデックス
     
-    questions: &'a [Question],     // お題リストへの参照
+    questions: Vec<&'a Question>,     // お題リストへの参照
     current_question_index: usize, // 今何問目か
     
     /// お題を CharState に分解したリスト
@@ -124,11 +146,15 @@ struct AppState<'a> {
 impl<'a> AppState<'a> {
     /// AppState の初期化
     fn new() -> Self {
+        let mut rng = rand::rng();
+        let mut questions: Vec<&Question> = QUESTIONS_LIST.iter().collect();
+        questions.shuffle(&mut rng);
+
         let mut state = Self {
             mode: AppMode::Menu,
             _menu_index: 0,
             
-            questions: QUESTIONS_LIST,
+            questions,
             current_question_index: 0,
             char_states: Vec::new(),
             current_char_index: 0,
@@ -151,7 +177,7 @@ impl<'a> AppState<'a> {
     
     /// 現在のお題を読み込み、`char_states` に分解する
     fn load_current_question(&mut self) {
-        let question = &self.questions[self.current_question_index];
+        let question = self.questions[self.current_question_index];
         self.char_states = self.parse_hiragana(question.hiragana);
         self.current_char_index = 0;
         self.is_error = false;
@@ -212,7 +238,7 @@ impl<'a> AppState<'a> {
 
     /// 表示用の日本語（漢字混じり）を返す
     fn get_current_question(&self) -> &'a Question {
-        &self.questions[self.current_question_index]
+        self.questions[self.current_question_index]
     }
     
     /// キー入力の処理
@@ -361,14 +387,20 @@ impl<'a> AppState<'a> {
 
 fn main() -> Result<()> {
     let mut app_state = AppState::new();
+
+    let cli = Cli::parse();
+    match &cli.command {
+        Some(Commands::Start) =>  app_state.mode = AppMode::Typing,
+        Some(Commands::Log) => app_state.mode = AppMode::Log,
+        // デフォルトの挙動
+        None => app_state.mode = AppMode::Menu,
+    }
     
     loop {
         match app_state.mode {
             AppMode::Menu => {
-                if show_menu(&mut app_state)? {
-                    // // スクリーンクリア
-                    // print!("\x1b[2J\x1b[H");
-                    // stdout().flush()?;
+                if !show_menu(&mut app_state)? {
+                    // falseだった時の処理
                 }
             }
             AppMode::Typing => {
@@ -392,8 +424,7 @@ fn main() -> Result<()> {
 
 fn show_menu(app_state: &mut AppState) -> Result<bool> {
     
-    // let term = Term::stdout();
-    // term.clear_screen()?;
+    let term = Term::stdout();
 
     // タイトルロゴ
     println!();
@@ -413,7 +444,6 @@ fn show_menu(app_state: &mut AppState) -> Result<bool> {
     println!();
 
 
-    
     let items = vec![
         "Start Type",
         "Mission (Coming Soon...)",
@@ -430,10 +460,15 @@ fn show_menu(app_state: &mut AppState) -> Result<bool> {
 
     match selection {
         Some(0) => {
-            // Start Type
             app_state.mode = AppMode::Typing;
-            app_state.load_current_question();
             Ok(true)
+        }
+        Some(1) => {
+            
+            app_state.mode = AppMode::Menu;
+            term.clear_screen()?;
+
+            Ok(false)
         }
         Some(2) => {
             // Game Log

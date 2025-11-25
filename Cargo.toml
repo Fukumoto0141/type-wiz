@@ -12,7 +12,6 @@ upgrade-guid = "20E59377-F54A-4EB3-A6B5-8AE829DFC184"
 path-guid = "A4959E94-C134-4223-B63C-895435313089"
 license = false
 eula = false
-locale = "ja-JP"
 banner = "./banner.bmp"
 dialog = "./dialog.bmp"
 product-icon = "./product_icon.ico"

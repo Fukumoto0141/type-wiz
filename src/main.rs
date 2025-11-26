@@ -36,6 +36,10 @@ use roman_mapping::create_roman_mapping;
 mod save_data;
 use save_data::{PlayerData, TypeRecord};
 
+// `src/update.rs` をモジュールとして読み込む
+mod update;
+use update::update;
+
 // --------------------------------------------------
 // アプリケーションモード
 // --------------------------------------------------
@@ -387,7 +391,7 @@ impl<'a> AppState<'a> {
 
 fn main() -> Result<()> {
     let mut app_state = AppState::new();
-
+    let _ = update();
     let cli = Cli::parse();
     match &cli.command {
         Some(Commands::Start) =>  app_state.mode = AppMode::Typing,
